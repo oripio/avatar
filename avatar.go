@@ -8,7 +8,6 @@ import (
 	"image/draw"
 	"image/png"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/golang/freetype"
 	"github.com/golang/freetype/truetype"
+	"github.com/rivo/uniseg"
 	"golang.org/x/image/font"
 )
 
@@ -30,7 +30,51 @@ const (
 	textY           = 320
 )
 
+type Avatar struct {
+	FontPath string
+	FontSize float64
+	Width    int
+	Height   int
+	Dpi      int
+	Spacer   int
+	TextY    int
+
+	FontColor string
+	BackColor string
+}
+
+func NewAvatar() *Avatar {
+	return &Avatar{
+		FontPath:  defaultfontFace,
+		FontSize:  fontSize,
+		Width:     int(imageWidth),
+		Height:    int(imageHeight),
+		Dpi:       int(dpi),
+		Spacer:    int(spacer),
+		TextY:     int(textY),
+		FontColor: "",
+		BackColor: "",
+	}
+}
+
+func (a *Avatar) ConfigureFont(path string, size float64) *Avatar {
+	a.FontPath, a.FontSize = path, size
+	return a
+}
+
+func (a *Avatar) ConfigureSize(width, height int) *Avatar {
+	a.Width, a.Height = width, height
+	return a
+}
+
+func (a *Avatar) ConfigureColor(fontColor, backColor string) *Avatar {
+	a.FontColor, a.BackColor = fontColor, backColor
+	return a
+}
+
 var fontFacePath = ""
+
+
 
 // SetFontFacePath sets the font to do the business with
 func SetFontFacePath(f string) {
@@ -49,28 +93,26 @@ func SetFontFacePath(f string) {
 // }
 
 // ToDisk saves the image to disk
-func ToDisk(initials, path string) {
-	saveToDisk(initials, path, "", "")
+func (a *Avatar) ToDisk(initials, path string) error {
+	return a.saveToDisk(initials, path, a.BackColor, a.FontColor)
 }
 
 // ToDiskCustom saves the image to disk
-func ToDiskCustom(initials, path, bgColor, fontColor string) {
-	saveToDisk(initials, path, bgColor, fontColor)
+func (a *Avatar) ToDiskCustom(initials, path, bgColor, fontColor string) error {
+	return a.saveToDisk(initials, path, bgColor, fontColor)
 }
 
 // saveToDisk saves the image to disk
-func saveToDisk(initials, path, bgColor, fontColor string) {
-	rgba, err := createAvatar(initials, bgColor, fontColor)
+func (a *Avatar) saveToDisk(initials, path, bgColor, fontColor string) error {
+	rgba, err := a.createAvatar(initials, bgColor, fontColor)
 	if err != nil {
-		log.Println(err)
-		return
+		return err
 	}
 
 	// Save image to disk
 	out, err := os.Create(path)
 	if err != nil {
-		log.Println(err)
-		os.Exit(1)
+		return err
 	}
 	defer out.Close()
 
@@ -78,33 +120,32 @@ func saveToDisk(initials, path, bgColor, fontColor string) {
 
 	err = png.Encode(b, rgba)
 	if err != nil {
-		log.Println(err)
-		os.Exit(1)
+		return err
 	}
 
 	err = b.Flush()
 	if err != nil {
-		log.Println(err)
-		os.Exit(1)
+		return err
 	}
+
+	return nil
 }
 
 // ToHTTP sends the image to a http.ResponseWriter (as a PNG)
-func ToHTTP(initials string, w http.ResponseWriter) {
-	saveToHTTP(initials, "", "", w)
+func (a *Avatar) ToHTTP(initials string, w http.ResponseWriter) error {
+	return a.saveToHTTP(initials, "", "", w)
 }
 
 // ToHTTPCustom sends the image to a http.ResponseWriter (as a PNG)
-func ToHTTPCustom(initials, bgColor, fontColor string, w http.ResponseWriter) {
-	saveToHTTP(initials, bgColor, fontColor, w)
+func (a *Avatar) ToHTTPCustom(initials, bgColor, fontColor string, w http.ResponseWriter) error {
+	return a.saveToHTTP(initials, bgColor, fontColor, w)
 }
 
 // saveToHTTP sends the image to a http.ResponseWriter (as a PNG)
-func saveToHTTP(initials, bgColor, fontColor string, w http.ResponseWriter) {
-	rgba, err := createAvatar(initials, bgColor, fontColor)
+func (a *Avatar) saveToHTTP(initials, bgColor, fontColor string, w http.ResponseWriter) error {
+	rgba, err := a.createAvatar(initials, bgColor, fontColor)
 	if err != nil {
-		log.Println(err)
-		return
+		return err
 	}
 
 	b := new(bytes.Buffer)
@@ -112,7 +153,7 @@ func saveToHTTP(initials, bgColor, fontColor string, w http.ResponseWriter) {
 
 	err = png.Encode(b, rgba)
 	if err != nil {
-		log.Println("unable to encode image.")
+		return err
 	}
 
 	w.Header().Set("Content-Type", "image/png")
@@ -121,34 +162,36 @@ func saveToHTTP(initials, bgColor, fontColor string, w http.ResponseWriter) {
 	w.Header().Set("Etag", `"`+key+`"`)
 
 	if _, err := w.Write(b.Bytes()); err != nil {
-		log.Println("unable to write image.")
+		return err
 	}
+
+	return nil
 }
 
-func cleanString(incoming string) string {
-	incoming = strings.TrimSpace(incoming)
-
-	// If its something like "firstname surname" get the initials out
-	split := strings.Split(incoming, " ")
-	if len(split) == 2 {
-		incoming = split[0][0:1] + split[1][0:1]
+func (a *Avatar) cleanString(incoming string) string {
+	if len(strings.TrimSpace(incoming)) == 0 {
+		return incoming
 	}
 
-	// Max length of 2
-	if len(incoming) > 2 {
-		incoming = incoming[0:2]
+	sb := strings.Builder{}
+	parts := strings.Fields(incoming)
+
+	if len(parts) == 1 && len(incoming) % 2 == 0 {
+		return strings.ToUpper(incoming)
 	}
 
-	// To upper and trimmed
-	return strings.ToUpper(strings.TrimSpace(incoming))
+	sb.WriteString(string([]rune(parts[0])[0]))
+
+	if len(parts) > 1 {
+		sb.WriteString(string([]rune(parts[1])[0]))
+	}
+
+	return sb.String()
 }
 
-func getFont(fontPath string) (*truetype.Font, error) {
-	if fontPath == "" {
-		fontPath = defaultfontFace
-	}
+func (a *Avatar) getFont() (*truetype.Font, error) {
 	// Read the font data.
-	fontBytes, err := ioutil.ReadFile(fontPath) //fmt.Sprintf("%s/%s", sourceDir, fontFaceName))
+	fontBytes, err := ioutil.ReadFile(a.FontPath) //fmt.Sprintf("%s/%s", sourceDir, fontFaceName))
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +201,7 @@ func getFont(fontPath string) (*truetype.Font, error) {
 
 var imageCache sync.Map
 
-func getImage(initials string) *image.RGBA {
+func (a *Avatar) getImage(initials string) *image.RGBA {
 	value, ok := imageCache.Load(initials)
 
 	if !ok {
@@ -172,22 +215,48 @@ func getImage(initials string) *image.RGBA {
 	return image
 }
 
-func setImage(initials string, image *image.RGBA) {
+func (a *Avatar) setImage(initials string, image *image.RGBA) {
 	imageCache.Store(initials, image)
 }
 
-func createAvatar(initials, bgColor, fontColor string) (*image.RGBA, error) {
+func s2stringUtf(s string) []string {
+	res := make([]string, 0)
+	gr := uniseg.NewGraphemes(s)
+	for gr.Next() {
+		runes := gr.Runes()
+		for _, r := range runes {
+			res = append(res, string(r))
+		}
+	}
+
+	return res
+}
+
+func s2runesUtf(s string) []rune {
+	res := make([]rune, 0)
+	gr := uniseg.NewGraphemes(s)
+	for gr.Next() {
+		runes := gr.Runes()
+		for _, r := range runes {
+			res = append(res, r)
+		}
+	}
+
+	return res
+}
+
+func (a *Avatar) createAvatar(initials, bgColor, fontColor string) (*image.RGBA, error) {
 	// Make sure the string is OK
-	text := cleanString(initials)
+	text := a.cleanString(initials)
 
 	// Check cache
-	cachedImage := getImage(text)
+	cachedImage := a.getImage(text)
 	if cachedImage != nil {
 		return cachedImage, nil
 	}
 
 	// Load and get the font
-	f, err := getFont(fontFacePath)
+	f, err := a.getFont()
 	if err != nil {
 		return nil, err
 	}
@@ -208,12 +277,12 @@ func createAvatar(initials, bgColor, fontColor string) (*image.RGBA, error) {
 		}
 	}
 
-	rgba := image.NewRGBA(image.Rect(0, 0, imageWidth, imageHeight))
+	rgba := image.NewRGBA(image.Rect(0, 0, a.Width, a.Height))
 	draw.Draw(rgba, rgba.Bounds(), &background, image.ZP, draw.Src)
 	c := freetype.NewContext()
-	c.SetDPI(dpi)
+	c.SetDPI(float64(a.Dpi))
 	c.SetFont(f)
-	c.SetFontSize(fontSize)
+	c.SetFontSize(a.FontSize)
 	c.SetClip(rgba.Bounds())
 	c.SetDst(rgba)
 	c.SetSrc(textColor)
@@ -222,7 +291,7 @@ func createAvatar(initials, bgColor, fontColor string) (*image.RGBA, error) {
 	// We need to convert the font into a "font.Face" so we can read the glyph
 	// info
 	to := truetype.Options{}
-	to.Size = fontSize
+	to.Size = a.FontSize
 	face := truetype.NewFace(f, &to)
 
 	// Calculate the widths and print to image
@@ -230,13 +299,13 @@ func createAvatar(initials, bgColor, fontColor string) (*image.RGBA, error) {
 	textWidths := []int{0, 0}
 
 	// Get the widths of the text characters
-	for i, char := range text {
+	for i, char := range s2runesUtf(text) {
 		width, ok := face.GlyphAdvance(rune(char))
 		if !ok {
 			return nil, err
 		}
 
-		textWidths[i] = int(float64(width) / 64)
+		textWidths[i] = int(width / 64)
 	}
 
 	// TODO need some tests for this
@@ -245,14 +314,14 @@ func createAvatar(initials, bgColor, fontColor string) (*image.RGBA, error) {
 	}
 
 	// Get the combined width of the characters
-	combinedWidth := textWidths[0] + spacer + textWidths[1]
+	combinedWidth := textWidths[0] + a.Spacer + textWidths[1]
 
 	// Draw first character
-	xPoints[0] = int((imageWidth - combinedWidth) / 2)
-	xPoints[1] = int(xPoints[0] + textWidths[0] + spacer)
+	xPoints[0] = int((a.Width - combinedWidth) / 2)
+	xPoints[1] = int(xPoints[0] + textWidths[0] + a.Spacer)
 
-	for i, char := range text {
-		pt := freetype.Pt(xPoints[i], textY)
+	for i, char := range s2runesUtf(text) {
+		pt := freetype.Pt(xPoints[i], a.TextY)
 		_, err := c.DrawString(string(char), pt)
 		if err != nil {
 			return nil, err
@@ -260,7 +329,7 @@ func createAvatar(initials, bgColor, fontColor string) (*image.RGBA, error) {
 	}
 
 	// Cache it
-	setImage(text, rgba)
+	a.setImage(text, rgba)
 
 	return rgba, nil
 }
