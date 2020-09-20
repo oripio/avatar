@@ -37,6 +37,7 @@ type Avatar struct {
 	Height   int
 	Dpi      int
 	Spacer   int
+	TextX    int
 	TextY    int
 
 	FontColor string
@@ -51,46 +52,36 @@ func NewAvatar() *Avatar {
 		Height:    int(imageHeight),
 		Dpi:       int(dpi),
 		Spacer:    int(spacer),
+		TextX:     0,
 		TextY:     int(textY),
 		FontColor: "",
 		BackColor: "",
 	}
 }
 
+// ConfigureFont configures font path and font size
 func (a *Avatar) ConfigureFont(path string, size float64) *Avatar {
 	a.FontPath, a.FontSize = path, size
 	return a
 }
 
+// ConfigureSize configures size of symbols
 func (a *Avatar) ConfigureSize(width, height int) *Avatar {
 	a.Width, a.Height = width, height
 	return a
 }
 
+// ConfigureColor configures font and background colors
 func (a *Avatar) ConfigureColor(fontColor, backColor string) *Avatar {
 	a.FontColor, a.BackColor = fontColor, backColor
 	return a
 }
 
-var fontFacePath = ""
-
-
-
-// SetFontFacePath sets the font to do the business with
-func SetFontFacePath(f string) {
-	fontFacePath = f
+// ConfigurePosition configures avatar symbols position
+func (a *Avatar) ConfigurePosition(x, y int) *Avatar {
+	a.TextX, a.TextY = x, y
+	return a
 }
-
-// var sourceDir string
-
-// func init() {
-// 	// We need to set the source directory for the font
-// 	_, filename, _, ok := runtime.Caller(0)
-// 	if !ok {
-// 		panic("No caller information")
-// 	}
-// 	sourceDir = path.Dir(filename)
-// }
 
 // ToDisk saves the image to disk
 func (a *Avatar) ToDisk(initials, path string) error {
